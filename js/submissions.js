@@ -68,6 +68,15 @@ const Submissions = (() => {
 
     if (chartsError) throw chartsError;
 
+    // Post inbox notification for reviewers
+    await window.supabase.from('inbox_items').insert({
+      type: 'submission',
+      title: `New chart pack: ${airportCode} by ${authorName}`,
+      body: `${chartRecords.length} chart${chartRecords.length !== 1 ? 's' : ''} submitted for review.`,
+      for_role: 'reviewer',
+      link: 'review.html',
+    });
+
     return submission;
   }
 
@@ -197,7 +206,7 @@ const Submissions = (() => {
       const tagCharts = (data || []).filter(c => c.tag === tag);
       if (tag === 'GEN' || tag === 'GND') {
         result[tag] = tagCharts.map(c => ({
-          name: `${c.chart_name} by <b>${c.author_name}</b>`,
+          name: c.chart_name,
           pdf: c.public_url,
         }));
       } else {

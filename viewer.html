@@ -368,57 +368,60 @@
     .viewer-placeholder i { font-size: 48px; opacity: 0.2; }
     .viewer-placeholder p { font-size: 14px; line-height: 1.7; }
 
-    /* Image viewer */
+    /* Image viewer — canvas based */
     .image-viewer {
       position: absolute;
       inset: 0;
-      overflow: auto;
-      cursor: grab;
       display: none;
+      cursor: grab;
     }
     .image-viewer:active { cursor: grabbing; }
-    .image-viewer img {
+    #viewer-canvas {
       display: block;
-      max-width: none;
-      max-height: none;
-      transform-origin: 0 0;
-      will-change: transform;
-      user-select: none;
-      -webkit-user-drag: none;
+      width: 100%;
+      height: 100%;
     }
 
-    /* Viewer controls */
+    /* Viewer controls - all grouped bottom right */
     .viewer-controls {
       position: absolute;
       bottom: 16px;
       right: 16px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      background: rgba(8,12,16,0.88);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
       z-index: 10;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
     }
     .viewer-btn {
-      width: 38px;
-      height: 38px;
-      border-radius: 9px;
-      border: 1px solid var(--border);
-      background: rgba(8,12,16,0.85);
-      backdrop-filter: blur(8px);
+      width: 40px;
+      height: 40px;
+      border: none;
+      border-bottom: 1px solid var(--border);
+      background: transparent;
       color: var(--text-dim);
-      font-size: 15px;
+      font-size: 14px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: color 0.2s, background 0.2s;
+      transition: color 0.15s, background 0.15s;
+      flex-shrink: 0;
     }
-    .viewer-btn:hover { color: var(--text); background: var(--dark-3); }
+    .viewer-btn:last-child { border-bottom: none; }
+    .viewer-btn:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+    .viewer-btn.close-btn { color: rgba(255,80,80,0.7); }
+    .viewer-btn.close-btn:hover { background: rgba(255,68,68,0.12); color: var(--red); }
 
-    .viewer-close {
-      position: absolute;
-      top: 12px;
-      right: 12px;
-      z-index: 10;
+    /* Divider between button groups */
+    .viewer-controls-divider {
+      height: 1px;
+      background: var(--border);
+      flex-shrink: 0;
     }
 
     /* Keyboard hint */
@@ -666,28 +669,33 @@
         </p>
       </div>
 
-      <!-- Image viewer -->
+      <!-- Image viewer — canvas renderer -->
       <div class="image-viewer" id="image-viewer">
-        <img id="chart-img" src="" alt="Chart">
+        <canvas id="viewer-canvas"></canvas>
       </div>
 
-      <!-- Controls overlay -->
+      <!-- Controls -->
       <div class="viewer-controls" id="viewer-controls" style="display:none;">
         <button class="viewer-btn" title="Recenter (F)" onclick="recenterImage()">
           <i class="fas fa-crosshairs"></i>
         </button>
-        <button class="viewer-btn" title="Zoom in" onclick="zoomIn()">
+        <button class="viewer-btn" title="Zoom in (+)" onclick="zoomIn()">
           <i class="fas fa-plus"></i>
         </button>
-        <button class="viewer-btn" title="Zoom out" onclick="zoomOut()">
+        <button class="viewer-btn" title="Zoom out (-)" onclick="zoomOut()">
           <i class="fas fa-minus"></i>
         </button>
-        <button class="viewer-btn viewer-close" title="Close" onclick="closeViewer()">
+        <div class="viewer-controls-divider"></div>
+        <button class="viewer-btn" title="Rotate 90° (R)" onclick="rotateImage()">
+          <i class="fas fa-rotate-right"></i>
+        </button>
+        <div class="viewer-controls-divider"></div>
+        <button class="viewer-btn close-btn" title="Close (Esc)" onclick="closeViewer()">
           <i class="fas fa-times"></i>
         </button>
       </div>
 
-      <div class="key-hint" id="key-hint">Press F to recenter · Scroll to zoom · Drag to pan</div>
+      <div class="key-hint" id="key-hint">F recenter · Scroll zoom · Drag pan · R rotate</div>
     </main>
   </div>
 
@@ -711,6 +719,7 @@
   </script>
   <script src="js/auth.js"></script>
   <script src="js/submissions.js"></script>
+  <script src="js/chartdata.js"></script>
   <script>
   // ============================================================
   // viewer.js (inline)
@@ -725,8 +734,7 @@
   let currentAuthor = '';    // '' = all
   let currentChartUrl = '';
   let scale = 1;
-  let isDragging = false;
-  let startX, startY, scrollLeft, scrollTop;
+  // drag state is managed inside setupImageViewer
 
   const STATIC_AIRPORTS = [
     { code: 'IBAR', name: 'Barra Airport' },
@@ -792,6 +800,9 @@
     // Keyboard shortcuts
     document.addEventListener('keydown', e => {
       if (e.key.toLowerCase() === 'f') recenterImage();
+      if (e.key.toLowerCase() === 'r') rotateImage();
+      if (e.key === '+' || e.key === '=') zoomIn();
+      if (e.key === '-') zoomOut();
       if (e.key === 'Escape') closeViewer();
     });
 
@@ -917,33 +928,69 @@
     }).join('');
   }
 
-  // ── Image viewer ───────────────────────────────────────────
+  // ── Canvas image viewer ────────────────────────────────────
+  // State
+  let cvs, ctx, img, rotation = 0;
+  let panX = 0, panY = 0;
+  let dragging = false, dragStartX, dragStartY, panStartX, panStartY;
+
+  function getCanvas() { return document.getElementById('viewer-canvas'); }
+
+  function syncCanvasSize() {
+    // Only update pixel dimensions when they actually change
+    const w = cvs.offsetWidth;
+    const h = cvs.offsetHeight;
+    if (cvs.width !== w || cvs.height !== h) {
+      cvs.width  = w;
+      cvs.height = h;
+    }
+  }
+
+  function draw() {
+    if (!cvs || !img || !img.complete) return;
+    syncCanvasSize();
+    ctx.clearRect(0, 0, cvs.width, cvs.height);
+    ctx.save();
+    ctx.translate(cvs.width / 2 + panX, cvs.height / 2 + panY);
+    ctx.rotate(rotation * Math.PI / 180);
+    ctx.scale(scale, scale);
+    ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+    ctx.restore();
+  }
+
+  function fitScale() {
+    const isRotated90 = rotation % 180 !== 0;
+    const iw = isRotated90 ? img.naturalHeight : img.naturalWidth;
+    const ih = isRotated90 ? img.naturalWidth  : img.naturalHeight;
+    const scaleW = (cvs.offsetWidth  * 0.88) / iw;
+    const scaleH = (cvs.offsetHeight * 0.88) / ih;
+    scale = Math.min(scaleW, scaleH);
+  }
+
   function openChart(url, btnEl) {
     if (!url) return;
     currentChartUrl = url;
 
-    // Highlight active button
     document.querySelectorAll('.chart-btn').forEach(b => b.classList.remove('active'));
     btnEl?.classList.add('active');
 
-    const viewer = document.getElementById('image-viewer');
-    const img = document.getElementById('chart-img');
+    cvs = getCanvas();
+    cvs.width  = cvs.offsetWidth  || cvs.parentElement.offsetWidth;
+    cvs.height = cvs.offsetHeight || cvs.parentElement.offsetHeight;
+    ctx = cvs.getContext('2d');
 
-    img.onload = function() {
-      scale = 1;
-      const vw = viewer.clientWidth;
-      const vh = viewer.clientHeight;
-      const ratio = img.naturalWidth / img.naturalHeight;
-      const vRatio = vw / vh;
-      scale = ratio > vRatio
-        ? (vw / img.naturalWidth) * 0.85
-        : (vh / img.naturalHeight) * 0.85;
-      img.style.transform = `scale(${scale})`;
-      recenterImage();
+    rotation = 0;
+    panX = 0;
+    panY = 0;
+
+    img = new Image();
+    img.onload = () => {
+      fitScale();
+      draw();
     };
-
     img.src = url;
-    viewer.style.display = 'block';
+
+    document.getElementById('image-viewer').style.display = 'block';
     document.getElementById('viewer-placeholder').style.display = 'none';
     document.getElementById('viewer-controls').style.display = 'flex';
     showKeyHint();
@@ -955,95 +1002,112 @@
     document.getElementById('viewer-controls').style.display = 'none';
     document.querySelectorAll('.chart-btn').forEach(b => b.classList.remove('active'));
     currentChartUrl = '';
+    if (cvs && ctx) ctx.clearRect(0, 0, cvs.width, cvs.height);
   }
 
   function recenterImage() {
-    const viewer = document.getElementById('image-viewer');
-    const img = document.getElementById('chart-img');
-    if (!img.complete || !img.naturalWidth) return;
-
-    const iw = img.naturalWidth * scale;
-    const ih = img.naturalHeight * scale;
-    viewer.scrollLeft = Math.max(0, (iw - viewer.clientWidth) / 2);
-    viewer.scrollTop  = Math.max(0, (ih - viewer.clientHeight) / 2);
+    panX = 0;
+    panY = 0;
+    if (img && img.complete) { fitScale(); draw(); }
   }
 
-  function zoomIn()  { applyZoom(scale * 1.2); }
-  function zoomOut() { applyZoom(scale * 0.8); }
-
-  function applyZoom(newScale) {
-    const viewer = document.getElementById('image-viewer');
-    const img = document.getElementById('chart-img');
-    const clamp = Math.max(0.2, Math.min(5, newScale));
-    const cx = viewer.scrollLeft + viewer.clientWidth / 2;
-    const cy = viewer.scrollTop  + viewer.clientHeight / 2;
-    const ratio = clamp / scale;
-    scale = clamp;
-    img.style.transform = `scale(${scale})`;
-    viewer.scrollLeft = cx * ratio - viewer.clientWidth / 2;
-    viewer.scrollTop  = cy * ratio - viewer.clientHeight / 2;
+  function rotateImage() {
+    rotation = (rotation + 90) % 360;
+    fitScale();
+    draw();
   }
+
+  function zoomIn()  { scale = Math.min(scale * 1.25, 10); draw(); }
+  function zoomOut() { scale = Math.max(scale * 0.8,  0.05); draw(); }
 
   function setupImageViewer() {
-    const viewer = document.getElementById('image-viewer');
+    const viewerEl = document.getElementById('image-viewer');
+
+    // Resize canvas when window resizes
+    window.addEventListener('resize', () => {
+      if (!cvs || !img) return;
+      syncCanvasSize();
+      draw();
+    });
 
     // Scroll to zoom
-    viewer.addEventListener('wheel', e => {
+    viewerEl.addEventListener('wheel', e => {
       e.preventDefault();
-      const rect = viewer.getBoundingClientRect();
-      const mx = e.clientX - rect.left + viewer.scrollLeft;
-      const my = e.clientY - rect.top  + viewer.scrollTop;
-      const delta = -e.deltaY * 0.001;
-      const newScale = Math.max(0.2, Math.min(5, scale * (1 + delta)));
+      if (!img) return;
+      const rect  = viewerEl.getBoundingClientRect();
+      const mx    = e.clientX - rect.left - cvs.offsetWidth  / 2 - panX;
+      const my    = e.clientY - rect.top  - cvs.offsetHeight / 2 - panY;
+      const delta = e.deltaY < 0 ? 1.1 : 0.9;
+      const newScale = Math.max(0.05, Math.min(10, scale * delta));
       const ratio = newScale / scale;
+      panX -= mx * (ratio - 1);
+      panY -= my * (ratio - 1);
       scale = newScale;
-      document.getElementById('chart-img').style.transform = `scale(${scale})`;
-      viewer.scrollLeft = mx * ratio - (e.clientX - rect.left);
-      viewer.scrollTop  = my * ratio - (e.clientY - rect.top);
+      draw();
     }, { passive: false });
 
     // Drag to pan
-    viewer.addEventListener('mousedown', e => {
-      isDragging = true;
-      startX = e.pageX - viewer.offsetLeft;
-      startY = e.pageY - viewer.offsetTop;
-      scrollLeft = viewer.scrollLeft;
-      scrollTop  = viewer.scrollTop;
+    viewerEl.addEventListener('mousedown', e => {
+      dragging   = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      panStartX  = panX;
+      panStartY  = panY;
+      viewerEl.style.cursor = 'grabbing';
     });
 
-    document.addEventListener('mouseup', () => { isDragging = false; });
+    document.addEventListener('mouseup', () => {
+      dragging = false;
+      viewerEl.style.cursor = 'grab';
+    });
 
     document.addEventListener('mousemove', e => {
-      if (!isDragging) return;
-      e.preventDefault();
-      const x = e.pageX - viewer.offsetLeft;
-      const y = e.pageY - viewer.offsetTop;
-      viewer.scrollLeft = scrollLeft - (x - startX) * 1.5;
-      viewer.scrollTop  = scrollTop  - (y - startY) * 1.5;
+      if (!dragging) return;
+      panX = panStartX + (e.clientX - dragStartX);
+      panY = panStartY + (e.clientY - dragStartY);
+      draw();
     });
 
-    // Touch support
+    // Touch pinch-zoom + pan
     let lastTouchDist = null;
-    viewer.addEventListener('touchstart', e => {
+    let lastTouchMid  = null;
+    viewerEl.addEventListener('touchstart', e => {
       if (e.touches.length === 2) {
         lastTouchDist = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
         );
+        lastTouchMid = {
+          x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+          y: (e.touches[0].clientY + e.touches[1].clientY) / 2
+        };
+      } else if (e.touches.length === 1) {
+        dragging   = true;
+        dragStartX = e.touches[0].clientX;
+        dragStartY = e.touches[0].clientY;
+        panStartX  = panX;
+        panStartY  = panY;
       }
     }, { passive: true });
 
-    viewer.addEventListener('touchmove', e => {
+    viewerEl.addEventListener('touchmove', e => {
+      e.preventDefault();
       if (e.touches.length === 2 && lastTouchDist) {
-        e.preventDefault();
         const dist = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
         );
-        applyZoom(scale * (dist / lastTouchDist));
+        scale = Math.max(0.05, Math.min(10, scale * (dist / lastTouchDist)));
         lastTouchDist = dist;
+        draw();
+      } else if (e.touches.length === 1 && dragging) {
+        panX = panStartX + (e.touches[0].clientX - dragStartX);
+        panY = panStartY + (e.touches[0].clientY - dragStartY);
+        draw();
       }
     }, { passive: false });
+
+    viewerEl.addEventListener('touchend', () => { dragging = false; lastTouchDist = null; });
   }
 
   // ── Keyboard hint ──────────────────────────────────────────

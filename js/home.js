@@ -59,13 +59,18 @@ function updateAuthUI(user) {
     userEl.style.display = 'flex';
     document.getElementById('user-avatar').src = user.avatar || '';
     document.getElementById('user-name').textContent = user.username;
+    document.getElementById('inbox-btn').style.display = 'flex';
 
     if (Auth.isReviewer()) {
       reviewerLink.style.display = 'flex';
+      document.getElementById('inbox-post-wrap').style.display = 'block';
     }
+
+    loadInbox(user);
   } else {
     guestEl.style.display = 'flex';
     userEl.style.display = 'none';
+    document.getElementById('inbox-btn').style.display = 'none';
   }
 }
 
@@ -194,7 +199,7 @@ function goToStep2() {
   const author = document.getElementById('submit-author').value.trim();
 
   if (!airport) { showToast('Please select an airport', 'error'); return; }
-  if (!author)  { showToast('Please enter your author name', 'error'); return; }
+  if (!author) { showToast('Please enter your author name', 'error'); return; }
 
   const airportObj = airports.find(a => a.code === airport);
   document.getElementById('step2-airport-label').textContent = `${airport} – ${airportObj?.name || ''}`;
@@ -293,7 +298,7 @@ async function submitChartPack() {
     const file = fileInput?.files[0];
 
     if (!name) { showToast(`Chart #${id}: please enter a name`, 'error'); return; }
-    if (!tag)  { showToast(`Chart #${id}: please select a tag`, 'error'); return; }
+    if (!tag) { showToast(`Chart #${id}: please select a tag`, 'error'); return; }
     if (!file) { showToast(`Chart #${id}: please upload an image`, 'error'); return; }
 
     slots.push({ name, tag, file });
@@ -441,3 +446,138 @@ function getStaticAirports() {
 
 // Start
 document.addEventListener('DOMContentLoaded', initHome);
+
+// ── Inbox ─────────────────────────────────────────────────────
+
+let inboxOpen = false;
+let inboxItems = [];
+
+function toggleInbox() {
+  inboxOpen = !inboxOpen;
+  document.getElementById('inbox-panel').style.display = inboxOpen ? 'flex' : 'none';
+  document.getElementById('inbox-backdrop').style.display = inboxOpen ? 'block' : 'none';
+}
+
+async function loadInbox(user) {
+  try {
+    const { data, error } = await window.supabase
+      .from('inbox_items')
+      .select('*')
+      .or(`for_role.eq.all,for_role.eq.${Auth.isReviewer() ? 'reviewer' : 'user'},for_user_id.eq.${user.discord_id}`)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) throw error;
+    inboxItems = data || [];
+    renderInbox(user);
+  } catch (e) {
+    console.error('Inbox load failed:', e);
+  }
+}
+
+function renderInbox(user) {
+  const list = document.getElementById('inbox-list');
+  const userId = Auth.getUser()?.discord_id || '';
+
+  if (!inboxItems.length) {
+    list.innerHTML = '<div class="inbox-empty"><i class="fas fa-inbox"></i><br>No notifications yet</div>';
+    updateInboxBadge(0);
+    return;
+  }
+
+  const unreadCount = inboxItems.filter(i => !i.read_by?.includes(userId)).length;
+  updateInboxBadge(unreadCount);
+
+  list.innerHTML = inboxItems.map(item => {
+    const isUnread = !item.read_by?.includes(userId);
+    const typeClass = item.type === 'submission' ? 'submission'
+      : item.type === 'approved' ? 'approved'
+        : item.type === 'denied' ? 'denied'
+          : 'update';
+    const unreadClass = isUnread ? `unread unread-${item.type}` : '';
+    const timeStr = formatTimeAgo(item.created_at);
+    return `
+      <div class="inbox-item ${unreadClass}" onclick="readItem('${item.id}')">
+        <div class="inbox-item-title">
+          <span>${item.title}</span>
+          <span class="inbox-type-badge ${typeClass}">${item.type}</span>
+        </div>
+        ${item.body ? `<div class="inbox-item-body">${item.body}</div>` : ''}
+        <div class="inbox-item-time">${timeStr}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function updateInboxBadge(count) {
+  const badge = document.getElementById('inbox-badge');
+  const btn = document.getElementById('inbox-btn');
+  if (count > 0) {
+    badge.textContent = count > 99 ? '99+' : count;
+    badge.style.display = 'block';
+    btn.classList.add('has-unread');
+  } else {
+    badge.style.display = 'none';
+    btn.classList.remove('has-unread');
+  }
+}
+
+async function readItem(id) {
+  const user = Auth.getUser();
+  if (!user) return;
+  const item = inboxItems.find(i => i.id === id);
+  if (!item) return;
+
+  // Navigate to link if present
+  if (item.link) window.location.href = item.link;
+
+  // Mark as read
+  if (!item.read_by?.includes(user.discord_id)) {
+    const newReadBy = [...(item.read_by || []), user.discord_id];
+    await window.supabase.from('inbox_items').update({ read_by: newReadBy }).eq('id', id);
+    item.read_by = newReadBy;
+    renderInbox(user);
+  }
+}
+
+async function markAllRead() {
+  const user = Auth.getUser();
+  if (!user) return;
+  for (const item of inboxItems) {
+    if (!item.read_by?.includes(user.discord_id)) {
+      item.read_by = [...(item.read_by || []), user.discord_id];
+      await window.supabase.from('inbox_items').update({ read_by: item.read_by }).eq('id', item.id);
+    }
+  }
+  renderInbox(user);
+}
+
+async function postUpdate() {
+  const title = document.getElementById('inbox-post-title').value.trim();
+  const body = document.getElementById('inbox-post-body').value.trim();
+  if (!title) { showToast('Please enter a title', 'error'); return; }
+
+  const { error } = await window.supabase.from('inbox_items').insert({
+    type: 'update',
+    title,
+    body: body || null,
+    for_role: 'all',
+  });
+
+  if (error) { showToast('Failed to post update', 'error'); return; }
+
+  document.getElementById('inbox-post-title').value = '';
+  document.getElementById('inbox-post-body').value = '';
+  showToast('Update posted!', 'success');
+
+  const user = Auth.getUser();
+  await loadInbox(user);
+}
+
+function formatTimeAgo(ts) {
+  const diff = Math.floor((Date.now() - new Date(ts)) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}

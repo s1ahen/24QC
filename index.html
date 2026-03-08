@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,9 +8,11 @@
   <link rel="icon" type="image/x-icon" href="favicon.ico">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;500;600&display=swap"
+    rel="stylesheet">
   <link rel="stylesheet" href="css/home.css">
 </head>
+
 <body>
 
   <!-- Background: aviation-themed particles / grid -->
@@ -22,6 +25,11 @@
       <span class="brand-number">24</span><span class="brand-word">QuickCharts</span>
     </div>
     <div class="topnav-right">
+      <!-- Inbox bell (shown when logged in) -->
+      <button id="inbox-btn" class="inbox-btn" onclick="toggleInbox()" style="display:none;" title="Notifications">
+        <i class="fas fa-envelope"></i>
+        <span class="inbox-badge" id="inbox-badge" style="display:none;"></span>
+      </button>
       <!-- Reviewer link (hidden until logged in as reviewer) -->
       <a href="review.html" id="reviewer-link" class="nav-link reviewer-link" style="display:none;">
         <i class="fas fa-clipboard-check"></i> Review Queue
@@ -53,24 +61,22 @@
   <!-- Hero Section -->
   <main class="hero">
     <div class="hero-content">
-      <div class="hero-tag">ATC24 · PTFS Community</div>
+      <div class="hero-tag">Community Made · Third Party · Not affiliated with ATC24 or PTFS</div>
       <h1 class="hero-title">
         <span class="title-big">QUICK</span>
         <span class="title-small">CHARTS</span>
       </h1>
-      <p class="hero-sub">Aviation charts for every airport in the game. Search, view, and contribute.</p>
+      <p class="hero-sub">A community-built chart database for ATC24 / PTFS. Search, view, and contribute aviation
+        charts.</p>
+      <p class="hero-disclaimer"><i class="fas fa-info-circle"></i> This is an independent, fan-made tool. It is not
+        created, endorsed, or affiliated with the ATC24 or PTFS development teams.</p>
 
       <!-- Search Bar -->
       <div class="search-wrap">
         <div class="search-box">
           <i class="fas fa-search search-icon"></i>
-          <input
-            type="text"
-            id="search-input"
-            placeholder="Search airport code or name..."
-            autocomplete="off"
-            spellcheck="false"
-          >
+          <input type="text" id="search-input" placeholder="Search airport code or name..." autocomplete="off"
+            spellcheck="false">
           <button class="search-btn" onclick="doSearch()">Go</button>
         </div>
         <div id="search-results" class="search-dropdown"></div>
@@ -142,7 +148,8 @@
           <div class="submit-success">
             <div class="success-icon"><i class="fas fa-check-circle"></i></div>
             <h3>Submitted for Review!</h3>
-            <p>Your chart pack has been sent to the review queue. You can track its status in <strong>My Submissions</strong>.</p>
+            <p>Your chart pack has been sent to the review queue. You can track its status in <strong>My
+                Submissions</strong>.</p>
             <button class="btn-primary" onclick="closeSubmitModal()">Done</button>
           </div>
         </div>
@@ -173,6 +180,28 @@
   </div>
   <div id="panel-backdrop" class="panel-backdrop" style="display:none;" onclick="closeMySubmissions()"></div>
 
+  <!-- Inbox Panel -->
+  <div id="inbox-panel" class="inbox-panel" style="display:none;">
+    <div class="inbox-panel-header">
+      <h3><i class="fas fa-envelope"></i> Notifications</h3>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="inbox-mark-all" onclick="markAllRead()">Mark all read</button>
+        <button class="inbox-close-btn" onclick="toggleInbox()"><i class="fas fa-times"></i></button>
+      </div>
+    </div>
+    <div id="inbox-list" class="inbox-list">
+      <div class="inbox-empty"><i class="fas fa-inbox"></i><br>No notifications yet</div>
+    </div>
+    <!-- Post update (reviewer only) -->
+    <div id="inbox-post-wrap" class="inbox-post-wrap" style="display:none;">
+      <div class="inbox-post-label"><i class="fas fa-pen"></i> Post an update</div>
+      <input type="text" id="inbox-post-title" class="inbox-post-input" placeholder="Title">
+      <textarea id="inbox-post-body" class="inbox-post-textarea" placeholder="Message (optional)"></textarea>
+      <button class="inbox-post-btn" onclick="postUpdate()">Post Update</button>
+    </div>
+  </div>
+  <div id="inbox-backdrop" class="inbox-backdrop" style="display:none;" onclick="toggleInbox()"></div>
+
   <!-- Toast notification -->
   <div id="toast" class="toast"></div>
 
@@ -187,4 +216,5 @@
   <script src="js/submissions.js"></script>
   <script src="js/home.js"></script>
 </body>
+
 </html>
